@@ -1,0 +1,15 @@
+{
+  "horde_start_sound_1": {
+    "subtitle": "sounds.hotwaves.horde_start_sound_1",
+    "sounds": [
+      "hotwaves:horde_start_sound_1",
+      "hotwaves:horde_start_sound_2"
+    ]
+  },
+  "horde_start_sound_2": {
+    "subtitle": "sounds.hotwaves.horde_start_sound_2",
+    "sounds": [
+      "hotwaves:horde_start_sound_2"
+    ]
+  }
+}
