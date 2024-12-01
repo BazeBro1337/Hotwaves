@@ -1,0 +1,37 @@
+{
+	"schemaVersion": 1,
+	"id": "hotwaves",
+	"version": "${version}",
+	"name": "hotwaves",
+	"description": "Highly configurable mob waves mod",
+	"authors": [
+		"BazeBro1337!"
+	],
+	"contact": {
+		"homepage": "https://fabricmc.net/",
+		"sources": "https://github.com/FabricMC/fabric-example-mod"
+	},
+	"license": "CC0-1.0",
+	"icon": "assets/hotwaves/icon.png",
+	"environment": "*",
+	"entrypoints": {
+		"main": [
+			"net.bzbr.hotwaves.Hotwaves"
+		],
+		"fabric-datagen": [
+			"net.bzbr.hotwaves.HotwavesDataGenerator"
+		]
+	},
+	"mixins": [
+		"hotwaves.mixins.json"
+	],
+	"depends": {
+		"fabricloader": ">=0.16.7",
+		"minecraft": "~1.20.1",
+		"java": ">=17",
+		"fabric-api": "*"
+	},
+	"suggests": {
+		"another-mod": "*"
+	}
+}
