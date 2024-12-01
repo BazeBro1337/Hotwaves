@@ -20,7 +20,7 @@ public class NightStartEventHandler {
         Hotwaves.LOGGER.info("Current day is: {}", serverTimePersistentState.getDayNumber());
         Hotwaves.LOGGER.info("Check is wave day");
 
-        if (serverTimePersistentState.getDayNumber() % ConfigManager.getWaveIntervalDays() == 0) {
+        if (serverTimePersistentState.getDayNumber() > 0 && (serverTimePersistentState.getDayNumber() % ConfigManager.getWaveIntervalDays() == 0)) {
             Hotwaves.LOGGER.info("Today is wave day");
             HordeStartEvent.EVENT.invoker().onHordeStartEvent("Starting wave", minecraftServer, serverTimePersistentState.getDayNumber());
         }
