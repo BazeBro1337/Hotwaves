@@ -11,10 +11,12 @@ import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
+import net.minecraft.entity.ai.goal.ActiveTargetGoal;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.mob.*;
 import net.minecraft.registry.Registries;
 import net.minecraft.server.MinecraftServer;
+import net.minecraft.server.network.ServerPlayerEntity;
 import net.minecraft.server.world.ServerWorld;
 import net.minecraft.sound.SoundCategory;
 import net.minecraft.util.Identifier;
@@ -45,6 +47,7 @@ public class WaveSpawner {
     private ServerWorld world;
     private ArrayList<MobSpawnData> actualMobsData;
     private Logger logger;
+    private Random rand;
 
     private final static Map<Integer, Double> difficultyMap;
 
@@ -57,6 +60,7 @@ public class WaveSpawner {
     }
 
     public WaveSpawner(MinecraftServer server, int currentDayNumber) {
+        rand = new Random();
         this.logger = Hotwaves.LOGGER;
         this.server = server;
         this.currentDayNumber = currentDayNumber;
@@ -89,14 +93,14 @@ public class WaveSpawner {
 
     private void PlayStartSound() {
 
-        final var players = world.getPlayers().stream().filter(pl -> !pl.isCreative()).toList();
+        final var players = world.getPlayers();
         players.forEach(player -> {
             var basePos = player.getBlockPos();
 
             BlockPos soundPos;
             soundPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), 12, 8, 0, false);
             soundPos = new BlockPos(soundPos.getX(), basePos.getY(), soundPos.getZ());
-            world.playSound(null,soundPos, HordeSounds.HORDE_START_SOUND_1, SoundCategory.HOSTILE, 0.9f, 1f);
+            world.playSound(null, soundPos, HordeSounds.HORDE_START_SOUND_1, SoundCategory.HOSTILE, 0.9f, 1f);
         });
     }
 
@@ -174,38 +178,49 @@ public class WaveSpawner {
 
             players.forEach(player -> {
 
-                for (int i = 0; i < mobSpawnData.count; i++) {
+                var basePos = player.getBlockPos();
 
-                    var basePos = player.getBlockPos();
+                var spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, true);
 
-                    var spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, true);
+                var posCheck = 0;
+                while (spawnPos.equals(basePos)) {
 
-                    var posCheck = 0;
-                    while (spawnPos.equals(basePos)) {
-
-                        spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, true);
-                        if (world.getBlockState(spawnPos).isOf(Blocks.LAVA)) {
-                            spawnPos = basePos;
-                        }
-                        if (posCheck++ >= 5) {
-                            spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, false);
-                            break;
-                        }
+                    spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, true);
+                    if (world.getBlockState(spawnPos).isOf(Blocks.LAVA)) {
+                        spawnPos = basePos;
                     }
+                    if (posCheck++ >= 5) {
+                        spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, false);
+                        break;
+                    }
+                }
+
+                for (int i = 0; i < mobSpawnData.count; i++) {
 
                     EntityType<?> mobType = Registries.ENTITY_TYPE.get(new Identifier(mobSpawnData.mobId()));
                     MobEntity mob = (MobEntity) mobType.create(world);
                     if (mob != null) {
-                        mob.refreshPositionAndAngles(spawnPos, 0, 0);
+                        mob.refreshPositionAndAngles(getSpawnPos(spawnPos), 0, 0);
                         world.spawnEntity(mob);
                         var goalSelector = ((MobEntityMixin) mob).getGoalSelector();
                         var speed = 1 + difficultyMap.get(world.getDifficulty().getId());
                         goalSelector.add(1, new PlayerTrackingGoal(mob, player, speed));
-                        logger.info("Mob spawned");
                     }
                 }
+                logger.info("Mobs are spawned");
             });
         });
+    }
+
+    private BlockPos getSpawnPos(BlockPos basepos) {
+        for (int j = 0; j < 5; j++) {
+            double x = basepos.getX() + rand.nextInt(10);
+            double z = basepos.getZ() + rand.nextInt(10);
+            var tempPos = new BlockPos((int) x, basepos.getY(), (int) z);
+            if (world.getBlockState(tempPos).isOf(Blocks.LAVA))
+                return world.getTopPosition(Heightmap.Type.MOTION_BLOCKING, tempPos);
+        }
+        return basepos;
     }
 
     public BlockPos getClosestLoadedPosFast(ServerWorld world, BlockPos basePos, Vec3d direction, double radius, int maxLight, int minLight, boolean checkLight) {
