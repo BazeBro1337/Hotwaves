@@ -29,8 +29,6 @@ public class ServerStartedEventHandler {
 
         this.logger = Hotwaves.LOGGER;
 
-        ServerTickEvents.START_SERVER_TICK.register(this::onServerTick);
-
         _overworld = server.getOverworld();
 
         var manager = _overworld.getPersistentStateManager();
@@ -41,9 +39,10 @@ public class ServerStartedEventHandler {
                 Hotwaves.GET_SERVER_DAY_STATE_IDENTIFIER.toString());
 
         tickCount = 0;
-        isDay = serverTimePersistentState.getIsDay();
+        isDay = _overworld.isDay();
         dayNumber = serverTimePersistentState.getDayNumber();
         shouldWaveContinue = serverTimePersistentState.getIsWaveRunning();
+        ServerTickEvents.START_SERVER_TICK.register(this::onServerTick);
         this.logger.info("ServerStartedEventHandler initialized");
         this.logger.info("Is day now: {}", isDay);
         this.logger.info("Day number: {}", dayNumber);
@@ -61,10 +60,10 @@ public class ServerStartedEventHandler {
                     this.logger.info("Horde continue");
                 }
 
+                NightStartEvent.EVENT.invoker().onNightStartEvent(minecraftServer, serverTimePersistentState, shouldWaveContinue);
                 shouldWaveContinue = false;
-                NightStartEvent.EVENT.invoker().onNightStartEvent(minecraftServer, serverTimePersistentState);
                 serverTimePersistentState.setIsDay(false);
-                isDay = serverTimePersistentState.getIsDay();
+                isDay = _overworld.isDay();
             }
 
             if (!isDay && _overworld.isDay()) {

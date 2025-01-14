@@ -28,10 +28,11 @@ public class Hotwaves implements ModInitializer {
 		ConfigManager.loadConfig();
 		HordeSounds.RegisterSounds();
 		var hordeEventHandler = new HordeEventHandler();
-		ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
+
 		NightStartEvent.EVENT.register(new NightStartEventHandler()::onStartNight);
 		HordeStartEvent.EVENT.register(hordeEventHandler::onStartHorde);
 		HordeEndEvent.EVENT.register(hordeEventHandler::onEndHorde);
+		ServerLifecycleEvents.SERVER_STARTED.register(this::onServerStarted);
 		CommandsRegistrator.Register();
 		LOGGER.info("Hello Fabric world!");
 	}

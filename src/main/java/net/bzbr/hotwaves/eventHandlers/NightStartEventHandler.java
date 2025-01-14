@@ -14,13 +14,13 @@ public class NightStartEventHandler {
 
     }
 
-    public void onStartNight(MinecraftServer minecraftServer, ServerTimePersistentState serverTimePersistentState){
+    public void onStartNight(MinecraftServer minecraftServer, ServerTimePersistentState serverTimePersistentState, boolean shouldWaveContinue){
 
         Hotwaves.LOGGER.info("Night started!");
         Hotwaves.LOGGER.info("Current day is: {}", serverTimePersistentState.getDayNumber());
         Hotwaves.LOGGER.info("Check is wave day");
 
-        if (serverTimePersistentState.getDayNumber() > 0 && (serverTimePersistentState.getDayNumber() % ConfigManager.getWaveIntervalDays() == 0)) {
+        if (shouldWaveContinue || (serverTimePersistentState.getDayNumber() > 0 && (serverTimePersistentState.getDayNumber() % ConfigManager.getWaveIntervalDays() == 0))) {
             Hotwaves.LOGGER.info("Today is wave day");
             HordeStartEvent.EVENT.invoker().onHordeStartEvent("Starting wave", minecraftServer, serverTimePersistentState.getDayNumber());
         }

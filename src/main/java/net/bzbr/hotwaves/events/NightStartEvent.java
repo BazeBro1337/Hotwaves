@@ -10,13 +10,13 @@ import org.slf4j.Logger;
 @FunctionalInterface
 public interface NightStartEvent {
 
-    void onNightStartEvent(MinecraftServer minecraftServer, ServerTimePersistentState serverTimePersistentState);
+    void onNightStartEvent(MinecraftServer minecraftServer, ServerTimePersistentState serverTimePersistentState, boolean shouldWaveContinue);
 
     // Экземпляр события, который будет вызываться
     Event<NightStartEvent> EVENT = EventFactory.createArrayBacked(NightStartEvent.class,
-            (listeners) -> (minecraftServer, serverTimePersistentState) -> {
+            (listeners) -> (minecraftServer, serverTimePersistentState, shouldWaveContinue) -> {
                 for (NightStartEvent listener : listeners) {
-                    listener.onNightStartEvent(minecraftServer, serverTimePersistentState);
+                    listener.onNightStartEvent(minecraftServer, serverTimePersistentState, shouldWaveContinue);
                 }
             }
     );

@@ -5,13 +5,13 @@ import net.bzbr.hotwaves.common.ai.PlayerTrackingGoal;
 import net.bzbr.hotwaves.common.configuration.ConfigManager;
 import net.bzbr.hotwaves.common.enums.MobStrength;
 import net.bzbr.hotwaves.common.sounds.HordeSounds;
+import net.bzbr.hotwaves.data.ServerTimePersistentState;
 import net.bzbr.hotwaves.mixin.MobEntityMixin;
 import net.fabricmc.fabric.api.entity.event.v1.ServerLivingEntityEvents;
 import net.fabricmc.fabric.api.event.lifecycle.v1.ServerTickEvents;
 import net.minecraft.block.Blocks;
 import net.minecraft.entity.Entity;
 import net.minecraft.entity.LivingEntity;
-import net.minecraft.entity.ai.goal.ActiveTargetGoal;
 import net.minecraft.entity.damage.DamageSource;
 import net.minecraft.entity.mob.*;
 import net.minecraft.registry.Registries;
@@ -33,12 +33,12 @@ import java.util.*;
 public class WaveSpawner {
 
     private static final Random random = new Random();
-    private MinecraftServer server;
-    private int currentDayNumber;
+    private final MinecraftServer server;
+    private final int currentDayNumber;
     private int currentTick;
     private int currentNoWaveTick;
     private int maxWavesDelay;
-    private int spawnIntervalTicks;
+    private int spawnWaveIntervalTicks;
     private int spawnRadiusData;
     private int allMobsCount;
     private List<ConfigManager.MobConfig> waveMobsData;
@@ -46,8 +46,10 @@ public class WaveSpawner {
     private int killedDuringHorde;
     private ServerWorld world;
     private ArrayList<MobSpawnData> actualMobsData;
-    private Logger logger;
-    private Random rand;
+    private final Logger logger;
+    private ServerTimePersistentState serverTimePersistentState;
+    private Queue<ServerPlayerEntity> playerEntityQueue;
+    private boolean spawnBlocked;
 
     private final static Map<Integer, Double> difficultyMap;
 
@@ -60,7 +62,8 @@ public class WaveSpawner {
     }
 
     public WaveSpawner(MinecraftServer server, int currentDayNumber) {
-        rand = new Random();
+        spawnBlocked = true;
+        playerEntityQueue = new LinkedList<>();
         this.logger = Hotwaves.LOGGER;
         this.server = server;
         this.currentDayNumber = currentDayNumber;
@@ -75,13 +78,29 @@ public class WaveSpawner {
         allMobsCount = 0;
         currentTick = 0;
         currentNoWaveTick = 0;
-        spawnIntervalTicks = 150;
+        spawnWaveIntervalTicks = 150;
         maxWavesDelay = 600;
+
+        var manager = server.getOverworld().getPersistentStateManager();
+
+        serverTimePersistentState = manager.getOrCreate(
+                ServerTimePersistentState::fromNbt,
+                ServerTimePersistentState::new,
+                Hotwaves.GET_SERVER_DAY_STATE_IDENTIFIER.toString());
+
     }
 
     public void StartSpawn() {
 
+        if (waveMobsData.isEmpty()) {
+
+            logger.info("Can't find mobs to spawn. Cancel wave");
+            StopSpawn();
+            return;
+        }
+
         world = server.getOverworld();
+        playerEntityQueue = new LinkedList<>(world.getPlayers());
         PrepareHordeData();
         isWaveDuring = true;
         DespawnMobsAround();
@@ -89,6 +108,7 @@ public class WaveSpawner {
         killedDuringHorde = -1;
         PlayStartSound();
         ServerTickEvents.START_SERVER_TICK.register(this::SpawnTick);
+        serverTimePersistentState.setIsWaveRunning(true);
     }
 
     private void PlayStartSound() {
@@ -106,6 +126,7 @@ public class WaveSpawner {
 
     public void StopSpawn() {
 
+        serverTimePersistentState.setIsWaveRunning(false);
         isWaveDuring = false;
     }
 
@@ -113,7 +134,7 @@ public class WaveSpawner {
 
         var currentWaveNumber = currentDayNumber / ConfigManager.getWaveIntervalDays();
         double waveMultiplier = Math.max(1, currentWaveNumber * difficultyMap.get(world.getDifficulty().getId()));
-        var playersCount = world.getPlayers().size();
+        var playersCount = world.getPlayers().stream().filter(pl -> !pl.isCreative()).toList().size();
 
         var isSolo = playersCount == 1;
 
@@ -151,71 +172,99 @@ public class WaveSpawner {
 
     private void SpawnTick(MinecraftServer minecraftServer) {
 
-        if (currentTick >= spawnIntervalTicks) {
+        if (currentTick >= spawnWaveIntervalTicks) {
 
-            if ((currentNoWaveTick >= maxWavesDelay || killedDuringHorde == -1 || (killedDuringHorde >= (int) (allMobsCount * 0.7))) && isWaveDuring) {
-                SpawnMobs();
+            if ((currentNoWaveTick >= maxWavesDelay || killedDuringHorde == -1 || (killedDuringHorde >= (int) (allMobsCount * 0.7)))
+                    && isWaveDuring
+                    && spawnBlocked) {
+
+                spawnBlocked = false;
+
                 currentNoWaveTick = 0;
             }
 
             currentTick = 0;
         }
 
+        if (!spawnBlocked) {
+            SpawnMobs();
+            if (playerEntityQueue.isEmpty()) {
+                spawnBlocked = true;
+            }
+        }
+
         currentNoWaveTick++;
         currentTick++;
+    }
+
+    private boolean NeedSpawnAroundPlayer(ServerPlayerEntity player) {
+
+        var box = Box.of(player.getPos(), spawnRadiusData * 2, spawnRadiusData * 2, spawnRadiusData * 2);
+        var mobsCount = world.getEntitiesByClass(HostileEntity.class, box, entity -> true).size();
+        var playersInBoxCount = world.getEntitiesByClass(ServerPlayerEntity.class, box, entity -> true).size();
+        var playersInWorldCount = world.getPlayers().stream().filter(pl -> !pl.isCreative()).toList().size();
+        var maxMobCount = (allMobsCount / Math.max(playersInWorldCount, 1)) * Math.max(playersInBoxCount, 1) * 0.5;
+        return mobsCount < maxMobCount;
     }
 
     private void SpawnMobs() {
 
         logger.info("Spawn started");
         killedDuringHorde = 0;
-        final var players = world.getPlayers().stream().filter(pl -> !pl.isCreative()).toList();
 
-        if (actualMobsData.stream().count() == 0) {
+        if (playerEntityQueue.isEmpty()) {
+
+            playerEntityQueue = new LinkedList<>(world.getPlayers().stream().filter(pl -> !pl.isCreative()).toList());
+        }
+
+        var player = playerEntityQueue.poll();
+
+        if (player == null) {
+            return;
+        }
+
+        if (actualMobsData.isEmpty()) {
             PrepareHordeData();
         }
-        actualMobsData.forEach(mobSpawnData -> {
 
-            players.forEach(player -> {
+        var basePos = player.getBlockPos();
 
-                var basePos = player.getBlockPos();
+        var spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, false);
 
-                var spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, true);
+        var posCheck = 0;
+        while (spawnPos.equals(basePos)) {
 
-                var posCheck = 0;
-                while (spawnPos.equals(basePos)) {
+            spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, false);
+            if (world.getBlockState(spawnPos).isOf(Blocks.LAVA)) {
+                spawnPos = basePos;
+            }
+            if (posCheck++ >= 5) {
+                spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 8, 0, true);
+                break;
+            }
+        }
 
-                    spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, true);
-                    if (world.getBlockState(spawnPos).isOf(Blocks.LAVA)) {
-                        spawnPos = basePos;
-                    }
-                    if (posCheck++ >= 5) {
-                        spawnPos = getClosestLoadedPosFast(world, basePos, getRandomDirection(), spawnRadiusData, 7, 0, false);
-                        break;
-                    }
+        for (var mobSpawnData : actualMobsData) {
+            for (int i = 0; i < mobSpawnData.count; i++) {
+
+                EntityType<?> mobType = Registries.ENTITY_TYPE.get(new Identifier(mobSpawnData.mobId()));
+                MobEntity mob = (MobEntity) mobType.create(world);
+                if (mob != null) {
+                    mob.refreshPositionAndAngles(getSpawnPos(spawnPos), 0, 0);
+                    world.spawnEntity(mob);
+                    var goalSelector = ((MobEntityMixin) mob).getGoalSelector();
+                    var speed = 1 + difficultyMap.get(world.getDifficulty().getId());
+                    goalSelector.add(1, new PlayerTrackingGoal(mob, player, speed));
                 }
-
-                for (int i = 0; i < mobSpawnData.count; i++) {
-
-                    EntityType<?> mobType = Registries.ENTITY_TYPE.get(new Identifier(mobSpawnData.mobId()));
-                    MobEntity mob = (MobEntity) mobType.create(world);
-                    if (mob != null) {
-                        mob.refreshPositionAndAngles(getSpawnPos(spawnPos), 0, 0);
-                        world.spawnEntity(mob);
-                        var goalSelector = ((MobEntityMixin) mob).getGoalSelector();
-                        var speed = 1 + difficultyMap.get(world.getDifficulty().getId());
-                        goalSelector.add(1, new PlayerTrackingGoal(mob, player, speed));
-                    }
-                }
-                logger.info("Mobs are spawned");
-            });
-        });
+            }
+            logger.info("Mobs are spawned");
+        }
     }
 
     private BlockPos getSpawnPos(BlockPos basepos) {
         for (int j = 0; j < 5; j++) {
-            double x = basepos.getX() + rand.nextInt(10);
-            double z = basepos.getZ() + rand.nextInt(10);
+            double x = basepos.getX() + random.nextInt(10);
+            double z = basepos.getZ() + random.nextInt(10);
             var tempPos = new BlockPos((int) x, basepos.getY(), (int) z);
             if (world.getBlockState(tempPos).isOf(Blocks.LAVA))
                 return world.getTopPosition(Heightmap.Type.MOTION_BLOCKING, tempPos);
@@ -223,7 +272,7 @@ public class WaveSpawner {
         return basepos;
     }
 
-    public BlockPos getClosestLoadedPosFast(ServerWorld world, BlockPos basePos, Vec3d direction, double radius, int maxLight, int minLight, boolean checkLight) {
+    public BlockPos getClosestLoadedPosFast(ServerWorld world, BlockPos basePos, Vec3d direction, double radius, int maxLight, int minLight, boolean skipValidation) {
         while (radius > 0) {
             // Вычисляем позицию на основе направления и радиуса
             BlockPos targetPos = basePos.add(
@@ -232,52 +281,21 @@ public class WaveSpawner {
                     (int) (direction.z * radius)
             );
 
-            // Получаем позицию с учётом высотной карты
             BlockPos heightPos = world.getTopPosition(Heightmap.Type.WORLD_SURFACE, targetPos);
 
-            // Проверяем, загружен ли чанк
-            if (world.isChunkLoaded(heightPos.getX() >> 4, heightPos.getZ() >> 4)) {
-                // Проверяем уровень света
-                int lightLevel = world.getLightLevel(heightPos);
-                if (lightLevel >= (checkLight ? minLight : 0) && lightLevel <= (checkLight ? maxLight : 15)) {
-                    return heightPos;
+            if (Math.abs(heightPos.getY() - basePos.getY()) <= 20 || skipValidation) {
+                if (world.isChunkLoaded(heightPos.getX() >> 4, heightPos.getZ() >> 4)) {
+                    // Проверяем уровень света
+                    int lightLevel = world.getLightLevel(heightPos);
+                    if (lightLevel >= (skipValidation ? 0 : minLight) && lightLevel <= (skipValidation ? 15 : maxLight)) {
+                        return heightPos;
+                    }
                 }
             }
 
-            // Уменьшаем радиус поиска
             radius--;
         }
 
-        // Если ничего не найдено, возвращаем базовую позицию
-        return basePos;
-    }
-
-    public static BlockPos getClosestLoadedPos(ServerWorld world, BlockPos basePos, Vec3d direction, double radius, int maxLight, int minLight) {
-        while (radius > 0) {
-            // Вычисляем позицию на основе направления и радиуса
-            BlockPos targetPos = basePos.add(
-                    (int) (direction.x * radius),
-                    0,
-                    (int) (direction.z * radius)
-            );
-
-            // Получаем позицию с учётом высотной карты
-            BlockPos heightPos = world.getTopPosition(Heightmap.Type.WORLD_SURFACE, targetPos);
-
-            // Проверяем, загружен ли чанк
-            if (world.isChunkLoaded(heightPos.getX() >> 4, heightPos.getZ() >> 4)) {
-                // Проверяем уровень света
-                int lightLevel = world.getLightLevel(heightPos);
-                if (lightLevel >= minLight && lightLevel <= maxLight) {
-                    return heightPos;
-                }
-            }
-
-            // Уменьшаем радиус поиска
-            radius--;
-        }
-
-        // Если ничего не найдено, возвращаем базовую позицию
         return basePos;
     }
 
